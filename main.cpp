@@ -2,7 +2,7 @@
 #include <string>
 #include <windows.h>
 
-#define N 16 // 030808
+#define N 32 // 030240
 
 using namespace std;
 
