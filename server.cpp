@@ -1,129 +1,47 @@
 #include <windows.h>
 #include <iostream>
+#include <string>
 
-#pragma comment(lib, "winmm.lib")
-
-using namespace std;
+using std::cout;
+using std::endl;
+using std::cin;
+using std::string;
 
 int main()
 {
-	system("chcp 1251");
-	system("cls");
+	HANDLE pipe;
+	string pipename, eventname;
+	char *data = new char[256];
+	OVERLAPPED overlapped;
+	DWORD written;
 
-	CHAR buffer[512];										
-	BOOL isConnected = FALSE;								
-	OVERLAPPED overlapped = OVERLAPPED();					
-	OVERLAPPED syncPipe = OVERLAPPED();						
+	ZeroMemory(&overlapped, sizeof(overlapped)); 
 
-	HANDLE Event = CreateEvent(NULL, FALSE, FALSE, NULL);
-	HANDLE Pipe = CreateNamedPipe(TEXT("\\\\.\\pipe\\berezkin"),							
-								  PIPE_ACCESS_DUPLEX,										
-								  PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,	
-																							 
-								  PIPE_UNLIMITED_INSTANCES,									
-								  512,														
-								  512,														
-								  0,														
-								  NULL														
-								  );
+	eventname = "someevent";
+	overlapped.hEvent = CreateEventA(NULL, TRUE, FALSE, eventname.c_str()); 
 
-	int choose;
+	pipename = "\\\\.\\pipe\\pepe"; 
+	pipe = CreateNamedPipeA(pipename.c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED, PIPE_TYPE_BYTE | PIPE_WAIT, 1, 256, 256, 0, NULL); 
+	ConnectNamedPipe(pipe, &overlapped);
 
-
-	if (Event != INVALID_HANDLE_VALUE && Pipe != INVALID_HANDLE_VALUE)
+	cout << "Enter the data until you enter the word \"stop\"\n\n";
+	while (true)
 	{
-		do
+		cin >> data;
+		if (strcmp(data, "stop") != 0) 
 		{
-			system("cls");
-
-			cout << "+---+---------------------------------------+" << endl;
-			cout << "| 1 | Присоединиться к именованному каналу  |" << endl;
-			cout << "+---+---------------------------------------+" << endl;
-			cout << "| 2 | Отправить сообщение                   |" << endl;
-			cout << "+---+---------------------------------------+" << endl;
-			cout << "| 3 | Отсоединиться от именованного канала  |" << endl;
-			cout << "+---+---------------------------------------+" << endl;
-			cout << "| 0 | Выйти                                 |" << endl;
-			cout << "+---+---------------------------------------+" << endl;
-
-			cin >> choose;
-
-			switch (choose) {
-
-			case 1:
-
-					syncPipe.hEvent = Event;
-
-					isConnected = ConnectNamedPipe(Pipe, &syncPipe);
-					WaitForSingleObject(Event, INFINITE);
-
-					if (isConnected)
-						cout << "Подключение прошло успешно!" << endl;
-					else
-						cout << "Не удалось подключиться к именованному каналу!" << endl;
-
-				system("pause");
-
-				break;
-
-			case 2:
-
-				if (isConnected == FALSE) cout << "Нет соединения!" << endl;
-				else {
-
-					cout << "Введите сообщение: ";
-					cin >> buffer;
-
-					overlapped.hEvent = Event;
-					isConnected = WriteFile(Pipe, (LPCVOID)buffer, 512, NULL, &overlapped);
-
-					if (WaitForSingleObject(Event, 20000) == WAIT_OBJECT_0 && isConnected)
-						cout << "Запись удалась!" << endl;
-					else
-						cout << "Запись не удалась!" << endl;
-
-				}
-
-				cout << endl;
-
-				system("pause");
-
-				break;
-
-			case 3:
-
-				isConnected = DisconnectNamedPipe(Pipe);
-
-				if (isConnected)
-					cout << "Вы были отсоединены от именованного канала!" << endl;
-				else
-					cout << "Не удалось отсоединиться!" << endl;
-
-				isConnected = FALSE;
-
-				system("pause");
-
-				break;
-
-			case 0:
-
-				break;
-
-			default:
-
-				break;
-
-			}
-		} while (choose);
+			cout << endl;
+			WriteFile(pipe, data, strlen(data) + 1, &written, &overlapped); 
+			WaitForSingleObject(overlapped.hEvent, INFINITE); 
+		}
+		else // если ввели слово "stop"
+		{
+			cout << "\nServer finished\n";
+			break; 
+		}
 	}
-	else
-		cout << "Не удалось создать именованный канал, перезапустите программу!" << endl;
 
-	if (Pipe != INVALID_HANDLE_VALUE)
-		CloseHandle(Pipe);
-	if (Event != INVALID_HANDLE_VALUE)
-		CloseHandle(Event);
-
+	DisconnectNamedPipe(pipe);
 
 	return 0;
 }
