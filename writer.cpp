@@ -1,65 +1,90 @@
-#include <iostream>
-#include <cstdlib>
-#include <ctime>
-#include <string>
+#define _CRT_SECURE_NO_WARNINGS
+#pragma comment(lib, "winmm.lib") 
 #include <windows.h>
+#include <iostream>
+#include <string>
+#include <stdlib.h>
 
-#define N 16
+#define PAGES 28
 
-using namespace std;
+using std::string;
+using std::to_string;
+using std::strlen;
 
-int main() {
-	HANDLE free, used, mutex, out, map;
-	DWORD point = 0;
-	LONG page = -1;
-	string output, saved;
-	LPVOID buf;
-	SYSTEM_INFO sysInfo;
-	GetSystemInfo(&sysInfo);
-	free = OpenSemaphoreA(SEMAPHORE_ALL_ACCESS, false, "free");
-	used = OpenSemaphoreA(SEMAPHORE_ALL_ACCESS, false, "used");
-	mutex = OpenMutexA(MUTEX_ALL_ACCESS, false, "mutex");
-	out = GetStdHandle(STD_OUTPUT_HANDLE);
-	map = OpenFileMappingA(GENERIC_WRITE, false, "map");
-	buf = MapViewOfFile(map, FILE_MAP_WRITE, 0, 0, sysInfo.dwPageSize * N);
-	srand(time(0));
+HANDLE *semaphores_for_writers = new HANDLE[PAGES]; // семафоры писателей для страниц памяти
+HANDLE *semaphores_for_readers = new HANDLE[PAGES]; // семафоры читателей для страниц памяти
 
-	if (map) {
-		for (int i = 0; i < 3; ++i) {
-			WaitForSingleObject(mutex, INFINITE);
-			output = "Time: " + to_string(GetTickCount()) + " | Lock mutex\n";
-			WriteFile(out, output.data(), output.length(), &point, NULL);
+void opening_semaphores()
+{
+    string semaphore_name;
+    for (int i = 0; i < PAGES; ++i)
+    {
+        semaphore_name = "semaphore " + to_string(i) + " (writer)";
+        semaphores_for_writers[i] = OpenSemaphoreA(SEMAPHORE_ALL_ACCESS, FALSE, semaphore_name.c_str()); 
+        semaphore_name = "semaphore " + to_string(i) + " (reader)";
+        semaphores_for_readers[i] = OpenSemaphoreA(SEMAPHORE_ALL_ACCESS, FALSE, semaphore_name.c_str()); 
+    }
+}
 
-			WaitForSingleObject(free, INFINITE);
-			output = "Time: " + to_string(GetTickCount()) + " | Take free semaphore\n";
-			WriteFile(out, output.data(), output.length(), &point, NULL);
+int main()
+{
+    srand(time(NULL)); 
 
-			if (ReleaseSemaphore(used, 1, &page)) {
-				saved = to_string(GetCurrentProcessId() + (rand() % 100)) + "    ";
-				memcpy((LPVOID)((long long)buf + (page * sysInfo.dwPageSize)), saved.data(), saved.length() * sizeof(char));
-				output = "Time: " + to_string(GetTickCount()) + " | Saved: " + saved + " | Page: " + to_string(page) + "\n";
-				WriteFile(out, output.data(), output.length(), &point, NULL);
-				output = "Time: " + to_string(GetTickCount()) + " | Add used semaphore\n";
-				WriteFile(out, output.data(), output.length(), &point, NULL);
-				Sleep(rand() % 1000 + 500);
-			}
-			else {
-				output = "Time: " + to_string(GetTickCount()) + " | Semaphore error" + " | Error code: " + to_string(GetLastError()) + "\n";
-				WriteFile(out, output.data(), output.length(), &point, NULL);
-			}
+   
+    SYSTEM_INFO system_info;
+    int buffer_size;
+    GetSystemInfo(&system_info);
+    buffer_size = PAGES * system_info.dwPageSize;
 
-			if (ReleaseMutex(mutex)) {
-				output = "Time: " + to_string(GetTickCount()) + " | Unlock mutex\n";
-				WriteFile(out, output.data(), output.length(), &point, NULL);
-			}
-			else {
-				output = "Time: " + to_string(GetTickCount()) + " | Mutex error" + " | Error code: " + to_string(GetLastError()) + "\n";
-				WriteFile(out, output.data(), output.length(), &point, NULL);
-			}
-		}
-	} else WriteFile(out, "Mapping failed\n", strlen("Mapping failed\n"), &point, NULL);
+    string buffer_name, mapped_name;
+    HANDLE mapped_handle;
+    LPVOID address;
 
-	CloseHandle(out);
+    buffer_name = "D:\\OS4\\buffer.txt";
+    mapped_name = "buffer";
 
-	return 0;
+    
+    mapped_handle = OpenFileMappingA(GENERIC_WRITE, FALSE, mapped_name.c_str());
+    address = MapViewOfFile(mapped_handle, FILE_MAP_WRITE, 0, 0, buffer_size);
+
+    
+    FILE *logfile, *logfile2;
+    string logfile_name, logfile_name2;
+    logfile_name = "D:\\OS4\\writing logs\\writer log " + to_string(GetCurrentProcessId()) + ".txt";
+    logfile = fopen(logfile_name.c_str(), "w");
+
+    logfile_name2 = "D:\\OS4\\writer for excel\\writer log " + to_string(GetCurrentProcessId()) + ".txt";
+    logfile2 = fopen(logfile_name2.c_str(), "w");
+
+    opening_semaphores(); 
+
+    char *data = new char[4] { 'a', 'b', 'c', '\0'};
+
+    DWORD start_time = timeGetTime();
+    while (timeGetTime() < start_time + 15000)
+    {
+        fprintf(logfile, "|Process: %d|\t\t\t|State: WAITING|\t\t\t\t|time: %d|\n", GetCurrentProcessId(), timeGetTime());
+        fprintf(logfile2, "%d %d\n", timeGetTime(), 0);
+
+        DWORD page = WaitForMultipleObjects(PAGES, semaphores_for_writers, FALSE, INFINITE);
+
+        fprintf(logfile, "|Process: %d|\t\t\t|State: WRITING; Page: %d|\t\t\t|time: %d|\n", GetCurrentProcessId(), page, timeGetTime());
+        fprintf(logfile2, "%d %d\n", timeGetTime(), 1);
+
+        int offset = page * system_info.dwPageSize; 
+        memcpy((LPVOID)((long long)address + offset), data, strlen(data) * sizeof(char)); 
+        Sleep(500 + rand() % 1001);
+
+        string logname = "D:\\OS4\\pages for excel\\page " + to_string(page) + ".txt";
+        FILE *log = fopen(logname.c_str(), "a");
+        fprintf(log, "%d %d\n", timeGetTime(), 1);
+        ReleaseSemaphore(semaphores_for_readers[page], 1, NULL);
+        fprintf(log, "%d %d\n", timeGetTime(), 0);
+        fclose(log);
+
+        fprintf(logfile, "|Process: %d|\t\t\t|State: RELEASED|\t\t\t\t|time: %d|\n\n", GetCurrentProcessId(), timeGetTime());
+        fprintf(logfile2, "%d %d\n", timeGetTime(), 2);
+    }
+
+    return 0;
 }
