@@ -1,74 +1,93 @@
+#include <windows.h>
 #include <iostream>
 #include <string>
-#include <windows.h>
 
-#define N 32 // 030240
+#define PAGES 28
 
-using namespace std;
+using std::string;
+using std::to_string;
+using std::cout;
 
-int main() {
-	HANDLE free, used, mutex, file, map, writers[N], readers[N];
-	LPVOID mapview;
-	DWORD filesize;
-	DWORD err;
-	free = CreateSemaphoreA(NULL, N, N, "free");
-	used = CreateSemaphoreA(NULL, 0, N, "used");
-	mutex = CreateMutexA(NULL, false, "mutex");
-	file = CreateFileA("C:\\Users\\sasha\\Documents\\os4test\\buffer.txt", GENERIC_ALL, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-	SYSTEM_INFO sysInfo;
-	GetSystemInfo(&sysInfo);
-	filesize = N * sysInfo.dwPageSize;
-	map = CreateFileMappingA(file, NULL, PAGE_READWRITE, 0, filesize, "map");
-	err = GetLastError();
-	mapview = MapViewOfFile(map, FILE_MAP_ALL_ACCESS, 0, 0, filesize);
-	VirtualLock(mapview, filesize);
+HANDLE *semaphores_for_writers = new HANDLE[PAGES]; 
+HANDLE *semaphores_for_readers = new HANDLE[PAGES]; 
+HANDLE *running_processes = new HANDLE[PAGES << 1];
 
-	//writers
-	for (int i = 0; i < N; ++i) {
-		wstring log = L"C:\\Users\\sasha\\Documents\\os4test\\wlog\\writer_" + to_wstring(i) + L".txt";
-		STARTUPINFO startInfo;
-		PROCESS_INFORMATION procInfo;
-		SECURITY_ATTRIBUTES secureAttr = { sizeof(secureAttr), NULL, TRUE };
-		ZeroMemory(&startInfo, sizeof(startInfo));
-		HANDLE out = CreateFile(log.data(), GENERIC_WRITE, FILE_SHARE_WRITE, &secureAttr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-		startInfo.cb = sizeof(startInfo);
-		startInfo.hStdOutput = out;
-		startInfo.hStdError = NULL;
-		startInfo.hStdInput = NULL;
-		startInfo.dwFlags |= STARTF_USESTDHANDLES;
-		ZeroMemory(&procInfo, sizeof(procInfo));
-		if (CreateProcess(L"C:\\Users\\sasha\\Documents\\os4test\\exe\\writer.exe", NULL, NULL, NULL, TRUE, 0, NULL, NULL, &startInfo, &procInfo))
-			writers[i] = procInfo.hProcess;
+void creating_semaphores(bool is_writer)
+{
+	string semaphore_name;
+	for (int i = 0; i < PAGES; ++i)
+	{
+		if (is_writer) // создаём семафоры писателей для страниц памяти
+		{
+			semaphore_name = "semaphore " + to_string(i) + " (writer)";
+			semaphores_for_writers[i] = CreateSemaphoreA(NULL, 1, 1, semaphore_name.c_str()); 
+		}
+		else // создаём семафоры читателей для страниц памяти
+		{
+			semaphore_name = "semaphore " + to_string(i) + " (reader)";
+			semaphores_for_readers[i] = CreateSemaphoreA(NULL, 0, 1, semaphore_name.c_str()); 
+		}
 	}
-	//readers 
-	for (int i = 0; i < N; ++i) {
-		wstring log = L"C:\\Users\\sasha\\Documents\\os4test\\rlog\\reader_" + to_wstring(i) + L".txt";
-		STARTUPINFO startInfo;
-		PROCESS_INFORMATION procInfo;
-		SECURITY_ATTRIBUTES secureAttr = { sizeof(secureAttr), NULL, TRUE };
-		ZeroMemory(&startInfo, sizeof(startInfo));
-		HANDLE out = CreateFile(log.data(), GENERIC_WRITE, FILE_SHARE_WRITE, &secureAttr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-		startInfo.cb = sizeof(startInfo);
-		startInfo.hStdOutput = out;
-		startInfo.dwFlags |= STARTF_USESTDHANDLES;
-		ZeroMemory(&procInfo, sizeof(procInfo));
-		if (CreateProcess(L"C:\\Users\\sasha\\Documents\\os4test\\exe\\reader.exe", NULL, NULL, NULL, TRUE, 0, NULL, NULL, &startInfo, &procInfo))
-			readers[i] = procInfo.hProcess;
-	}
+}
 
-	WaitForMultipleObjects(N, writers, true, INFINITE);
-	WaitForMultipleObjects(N, readers, true, INFINITE);
-
-	for (int i = 0; i < N; ++i) {
-		CloseHandle(writers[i]);
-		CloseHandle(readers[i]);
+void creating_processes(bool is_writer)
+{
+	LPSTARTUPINFOA startup_info = new STARTUPINFOA[PAGES]; 
+	LPPROCESS_INFORMATION process_information = new PROCESS_INFORMATION[PAGES]; 
+	string process_name;
+	if (is_writer) // имя exe-файла писателя
+	{
+		process_name = "D:\\OS4\\exe\\os_lab_04_1_writer.exe";
 	}
-	CloseHandle(free);
-	CloseHandle(used);
-	CloseHandle(mutex);
-	CloseHandle(mapview);
-	CloseHandle(map);
-	CloseHandle(file);
+	else // имя exe-файла читателя
+	{
+		process_name = "D:\\OS4\\exe\\os_lab_04_1_reader.exe";
+	}
+	for (int i = 0; i < PAGES; ++i)
+	{
+		ZeroMemory(&startup_info[i], sizeof(startup_info[i])); // зануляем блок памяти для STARTUPINFOA
+		CreateProcessA(process_name.c_str(), NULL, NULL, NULL, TRUE, 0, NULL, NULL, &startup_info[i], &process_information[i]); 
+		if (is_writer)
+		{
+			running_processes[i] = process_information[i].hProcess; 
+		}
+		else
+		{
+			running_processes[PAGES + i] = process_information[i].hProcess; 
+		}
+	}
+}
+
+int main()
+{
+	
+	SYSTEM_INFO system_info;
+	int buffer_size;
+	GetSystemInfo(&system_info);
+	buffer_size = PAGES * system_info.dwPageSize;
+
+	string buffer_name, mapped_name;
+	HANDLE buffer_handle, mapped_handle;
+	LPVOID address;
+
+	buffer_name = "D:\\OS4\\buffer.txt";
+	mapped_name = "buffer";
+
+	
+	buffer_handle = CreateFileA(buffer_name.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	mapped_handle = CreateFileMappingA(buffer_handle, NULL, PAGE_READWRITE, 0, buffer_size, mapped_name.c_str());
+	address = MapViewOfFile(mapped_handle, FILE_MAP_WRITE, 0, 0, buffer_size);
+	VirtualLock(address, buffer_size); 
+
+	
+	creating_semaphores(true);
+	creating_semaphores(false);
+
+	
+	creating_processes(true);
+	creating_processes(false);
+
+	WaitForMultipleObjects(PAGES << 1, running_processes, TRUE, INFINITE); 
 
 	return 0;
 }
